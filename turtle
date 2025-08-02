@@ -961,6 +961,117 @@ local function isLiquid(block_name)
     return false
 end
 
+-- FORWARD DECLARATIONS (functions that need to call each other)
+local protectedDig, safeMove, smartMove
+
+-- Define safeMove first (needed by other functions)
+safeMove = function(direction)
+    local moveFunc, detectFunc, attackFunc
+    
+    if direction == "forward" then
+        moveFunc = turtle.forward
+        detectFunc = turtle.detect
+        attackFunc = turtle.attack
+    elseif direction == "up" then
+        moveFunc = turtle.up
+        detectFunc = turtle.detectUp
+        attackFunc = turtle.attackUp
+    elseif direction == "down" then
+        moveFunc = turtle.down
+        detectFunc = turtle.detectDown
+        attackFunc = turtle.attackDown
+    elseif direction == "back" then
+        moveFunc = turtle.back
+        detectFunc = function() 
+            turnRight()
+            turnRight()
+            local result = turtle.detect()
+            turnRight()
+            turnRight()
+            return result
+        end
+        attackFunc = function()
+            turnRight()
+            turnRight()
+            local result = turtle.attack()
+            turnRight()
+            turnRight()
+            return result
+        end
+    end
+    
+    for attempt = 1, CONFIG.maxRetries do
+        if moveFunc() then
+            -- Ender Modems: Update GPS more frequently for precise deep mining
+            local update_gps = (stats.moves_since_save % 3 == 0)  -- Every 3 moves instead of 5-10
+            
+            if update_gps then
+                local success, method = updatePosition(false)  -- Use cache when possible
+                if not success then
+                    if method == "GPS_ENDER_FAILURE" then
+                        log("CRITICAL: Ender Modem GPS failure during mining!", "ERROR")
+                        return false
+                    end
+                    log("GPS cache miss - continuing with dead reckoning", "WARN")
+                end
+            else
+                -- Dead reckoning update (backup for Ender Modems)
+                if direction == "forward" then
+                    if turtle_pos.facing == 0 then 
+                        turtle_pos.z = turtle_pos.z - 1
+                    elseif turtle_pos.facing == 1 then 
+                        turtle_pos.x = turtle_pos.x + 1
+                    elseif turtle_pos.facing == 2 then 
+                        turtle_pos.z = turtle_pos.z + 1
+                    elseif turtle_pos.facing == 3 then 
+                        turtle_pos.x = turtle_pos.x - 1
+                    end
+                elseif direction == "up" then
+                    turtle_pos.y = turtle_pos.y + 1
+                elseif direction == "down" then
+                    turtle_pos.y = turtle_pos.y - 1
+                elseif direction == "back" then
+                    if turtle_pos.facing == 0 then 
+                        turtle_pos.z = turtle_pos.z + 1
+                    elseif turtle_pos.facing == 1 then 
+                        turtle_pos.x = turtle_pos.x - 1
+                    elseif turtle_pos.facing == 2 then 
+                        turtle_pos.z = turtle_pos.z - 1
+                    elseif turtle_pos.facing == 3 then 
+                        turtle_pos.x = turtle_pos.x + 1
+                    end
+                end
+            end
+            
+            stats.moves_since_save = stats.moves_since_save + 1
+            if stats.moves_since_save >= CONFIG.stateSaveInterval then
+                saveState()
+            end
+            
+            -- Clean up old torch positions periodically
+            if stats.moves_since_save % 100 == 0 then
+                cleanupOldTorchPositions()
+            end
+            
+            return true
+        end
+        
+        if detectFunc() then
+            if direction ~= "back" and not protectedDig(direction) then
+                log("Cannot dig " .. direction .. " - protected block or danger", "WARN")
+                return false
+            end
+        elseif attackFunc() then
+            sleep(0.5)
+        else
+            sleep(0.1)
+        end
+    end
+    
+    log("Failed to move " .. direction .. " after " .. CONFIG.maxRetries .. " attempts", "ERROR")
+    return false
+end
+
 -- Use the modded ore analysis function
 local function analyzeOre(direction)
     return analyzeModdedOre(direction)
@@ -1069,7 +1180,8 @@ local function followOreVein(ore_name, depth, visited)
     end
 end
 
-local function protectedDig(direction)
+-- Define protectedDig (needed by safeMove and others)
+protectedDig = function(direction)
     local target_x, target_y, target_z = turtle_pos.x, turtle_pos.y, turtle_pos.z
     local digFunc, inspectFunc
     
@@ -1206,113 +1318,6 @@ local function mine3x3Forward()
     stats.blocks_3x3_mined = stats.blocks_3x3_mined + blocks_mined
     log("3x3 mining completed, mined " .. blocks_mined .. " blocks")
     return blocks_mined > 0
-end
-
-local function safeMove(direction)
-    local moveFunc, detectFunc, attackFunc
-    
-    if direction == "forward" then
-        moveFunc = turtle.forward
-        detectFunc = turtle.detect
-        attackFunc = turtle.attack
-    elseif direction == "up" then
-        moveFunc = turtle.up
-        detectFunc = turtle.detectUp
-        attackFunc = turtle.attackUp
-    elseif direction == "down" then
-        moveFunc = turtle.down
-        detectFunc = turtle.detectDown
-        attackFunc = turtle.attackDown
-    elseif direction == "back" then
-        moveFunc = turtle.back
-        detectFunc = function() 
-            turnRight()
-            turnRight()
-            local result = turtle.detect()
-            turnRight()
-            turnRight()
-            return result
-        end
-        attackFunc = function()
-            turnRight()
-            turnRight()
-            local result = turtle.attack()
-            turnRight()
-            turnRight()
-            return result
-        end
-    end
-    
-    for attempt = 1, CONFIG.maxRetries do
-        if moveFunc() then
-            -- Ender Modems: Update GPS more frequently for precise deep mining
-            local update_gps = (stats.moves_since_save % 3 == 0)  -- Every 3 moves instead of 5-10
-            
-            if update_gps then
-                local success, method = updatePosition(false)  -- Use cache when possible
-                if not success then
-                    if method == "GPS_ENDER_FAILURE" then
-                        log("CRITICAL: Ender Modem GPS failure during mining!", "ERROR")
-                        return false
-                    end
-                    log("GPS cache miss - continuing with dead reckoning", "WARN")
-                end
-            else
-                -- Dead reckoning update (backup for Ender Modems)
-                if direction == "forward" then
-                    if turtle_pos.facing == 0 then 
-                        turtle_pos.z = turtle_pos.z - 1
-                    elseif turtle_pos.facing == 1 then 
-                        turtle_pos.x = turtle_pos.x + 1
-                    elseif turtle_pos.facing == 2 then 
-                        turtle_pos.z = turtle_pos.z + 1
-                    elseif turtle_pos.facing == 3 then 
-                        turtle_pos.x = turtle_pos.x - 1
-                    end
-                elseif direction == "up" then
-                    turtle_pos.y = turtle_pos.y + 1
-                elseif direction == "down" then
-                    turtle_pos.y = turtle_pos.y - 1
-                elseif direction == "back" then
-                    if turtle_pos.facing == 0 then 
-                        turtle_pos.z = turtle_pos.z + 1
-                    elseif turtle_pos.facing == 1 then 
-                        turtle_pos.x = turtle_pos.x - 1
-                    elseif turtle_pos.facing == 2 then 
-                        turtle_pos.z = turtle_pos.z - 1
-                    elseif turtle_pos.facing == 3 then 
-                        turtle_pos.x = turtle_pos.x + 1
-                    end
-                end
-            end
-            
-            stats.moves_since_save = stats.moves_since_save + 1
-            if stats.moves_since_save >= CONFIG.stateSaveInterval then
-                saveState()
-            end
-            
-            -- Clean up old torch positions periodically
-            if stats.moves_since_save % 100 == 0 then
-                cleanupOldTorchPositions()
-            end
-            
-            return true
-        end
-        
-        if detectFunc() then
-            if direction ~= "back" and not protectedDig(direction) then
-                log("Cannot dig " .. direction .. " - protected block or danger", "WARN")
-                return false
-            end
-        elseif attackFunc() then
-            sleep(0.5)
-        else
-            sleep(0.1)
-        end
-    end
-    
-    log("Failed to move " .. direction .. " after " .. CONFIG.maxRetries .. " attempts", "ERROR")
-    return false
 end
 
 local function smartMove(direction, allow_vertical_detour)
