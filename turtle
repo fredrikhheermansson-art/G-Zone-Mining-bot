@@ -259,48 +259,7 @@ local mining_type = nil
 
 -- ===== MODDED MINECRAFT SUPPORT FUNCTIONS =====
 
--- Ladda anpassade malmprioritet
-local function loadCustomOrePriorities()
-    if fs.exists(CONFIG.modded_ore_file) then
-        local content = safeFileRead(CONFIG.modded_ore_file)
-        if not content then
-            log("Failed to read custom ore file", "ERROR")
-            return false
-        end
-        
-        local loaded_count = 0
-        for line in content:gmatch("[^\r\n]+") do
-            -- Skippa kommentarer och tomma rader
-            line = line:trim()
-            if line ~= "" and not line:find("^#") then
-                -- Format: "modname:orename,priority,display_name"
-                local parts = {}
-                for part in line:gmatch("[^,]+") do
-                    table.insert(parts, part:trim())
-                end
-                
-                if #parts >= 2 then
-                    local ore_name = parts[1]
-                    local priority = tonumber(parts[2]) or 5
-                    local display_name = parts[3] or ore_name:gsub(".*:", ""):gsub("_", " ")
-                    
-                    custom_ore_priorities[ore_name] = {
-                        priority = priority,
-                        name = display_name
-                    }
-                    loaded_count = loaded_count + 1
-                end
-            end
-        end
-        log("Loaded " .. loaded_count .. " custom ore priorities")
-        return true
-    else
-        -- Skapa exempel-fil
-        return createExampleOreFile()
-    end
-end
-
--- Skapa exempel-fil för anpassade malmer
+-- Skapa exempel-fil för anpassade malmer (MÅSTE VARA FÖRE loadCustomOrePriorities)
 local function createExampleOreFile()
     local example_content = {
         "# Anpassade malmprioritet för moddat Minecraft",
@@ -353,6 +312,47 @@ local function createExampleOreFile()
     else
         log("Failed to create example ore file: " .. (err or "unknown error"), "ERROR")
         return false
+    end
+end
+
+-- Ladda anpassade malmprioritet
+local function loadCustomOrePriorities()
+    if fs.exists(CONFIG.modded_ore_file) then
+        local content = safeFileRead(CONFIG.modded_ore_file)
+        if not content then
+            log("Failed to read custom ore file", "ERROR")
+            return false
+        end
+        
+        local loaded_count = 0
+        for line in content:gmatch("[^\r\n]+") do
+            -- Skippa kommentarer och tomma rader
+            line = line:trim()
+            if line ~= "" and not line:find("^#") then
+                -- Format: "modname:orename,priority,display_name"
+                local parts = {}
+                for part in line:gmatch("[^,]+") do
+                    table.insert(parts, part:trim())
+                end
+                
+                if #parts >= 2 then
+                    local ore_name = parts[1]
+                    local priority = tonumber(parts[2]) or 5
+                    local display_name = parts[3] or ore_name:gsub(".*:", ""):gsub("_", " ")
+                    
+                    custom_ore_priorities[ore_name] = {
+                        priority = priority,
+                        name = display_name
+                    }
+                    loaded_count = loaded_count + 1
+                end
+            end
+        end
+        log("Loaded " .. loaded_count .. " custom ore priorities")
+        return true
+    else
+        -- Skapa exempel-fil
+        return createExampleOreFile()
     end
 end
 
