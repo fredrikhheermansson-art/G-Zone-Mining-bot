@@ -256,6 +256,8 @@ local mining_numTunnels = nil
 local mining_depth = nil
 local mining_direction = nil
 local mining_type = nil
+local mining_room_height = nil
+
 
 -- ===== MODDED MINECRAFT SUPPORT FUNCTIONS =====
 
@@ -588,14 +590,15 @@ local function saveState()
         discovered_ores = discovered_ores,
         custom_ore_priorities = custom_ore_priorities,
         mining_config = {
-            length = mining_length,
-            tunnelWidth = mining_tunnelWidth,
-            spacing = mining_spacing,
-            numTunnels = mining_numTunnels,
-            depth = mining_depth,
-            direction = mining_direction,
-            type = mining_type
-        }
+			length = mining_length,
+			tunnelWidth = mining_tunnelWidth,
+			spacing = mining_spacing,
+			numTunnels = mining_numTunnels,
+			depth = mining_depth,
+			direction = mining_direction,
+			type = mining_type,
+			room_height = mining_room_height
+		}
     }
     
     local success, err = pcall(function()
@@ -645,15 +648,16 @@ local function loadState()
                 custom_ore_priorities = state.custom_ore_priorities or {}
                 
                 if state.mining_config then
-                    mining_length = state.mining_config.length
-                    mining_tunnelWidth = state.mining_config.tunnelWidth
-                    mining_spacing = state.mining_config.spacing
-                    mining_numTunnels = state.mining_config.numTunnels
-                    mining_depth = state.mining_config.depth
-                    mining_direction = state.mining_config.direction
-                    mining_type = state.mining_config.type
-                    log("Loaded mining configuration")
-                end
+					mining_length = state.mining_config.length
+					mining_tunnelWidth = state.mining_config.tunnelWidth
+					mining_spacing = state.mining_config.spacing
+					mining_numTunnels = state.mining_config.numTunnels
+					mining_depth = state.mining_config.depth
+					mining_direction = state.mining_config.direction
+					mining_type = state.mining_config.type
+					mining_room_height = state.mining_config.room_height
+					log("Loaded mining configuration")
+				end
                 
                 local chest_count = 0
                 for y, xz in pairs(chest_positions) do
@@ -2288,61 +2292,71 @@ local function navigateToRoomCorner(length, width)
     return true
 end
 
-local function createDescentToNextLevel()
-    log("Creating descent point to next level (current Y=" .. turtle_pos.y .. ")")
+local function createDescentToNextLevel(room_height)
+    room_height = room_height or 1  -- Default 1 block om inget anges
+    log("Creating descent point to next level, going down " .. room_height .. " blocks (current Y=" .. turtle_pos.y .. ")")
     
-    -- First, clear the space below
-    protectedDig("down")
+    local blocks_descended = 0
     
-    -- Try to move down
-    if smartMove("down", false) then
-        log("Successfully descended to next level (Y=" .. turtle_pos.y .. ")")
+    for i = 1, room_height do
+        -- First, clear the space below
+        protectedDig("down")
         
-        if turtle_pos.y <= -60 then
-            log("WARNING: Approaching bedrock level (Y=" .. turtle_pos.y .. ")")
-        end
-        
-        return true
-    else
-        -- If we can't move down, investigate why
-        local success, data = turtle.inspectDown()
-        if success then
-            log("Blocked by: " .. (data.name or "unknown block"))
-            if data.name and data.name:lower():find("bedrock") then
-                log("CONFIRMED: Hit actual bedrock at Y=" .. turtle_pos.y)
-                stats.bedrock_hits = stats.bedrock_hits + 1
-                return false
-            else
-                log("Blocked by " .. data.name .. " - trying to break through")
-                -- Try harder to dig through
-                for i = 1, 5 do
-                    if protectedDig("down") then
-                        log("Broke through obstacle, trying to descend again")
-                        if smartMove("down", false) then
-                            log("Successfully descended after clearing obstacle (Y=" .. turtle_pos.y .. ")")
-                            return true
-                        end
-                    end
-                    sleep(0.5)
-                end
-                log("Cannot break through obstacle - may be bedrock or liquid")
-                return false
+        -- Try to move down
+        if smartMove("down", false) then
+            blocks_descended = blocks_descended + 1
+            
+            if turtle_pos.y <= -60 then
+                log("WARNING: Approaching bedrock level (Y=" .. turtle_pos.y .. ")")
             end
         else
-            log("No block detected below but cannot move - may be at world bottom")
-            if turtle_pos.y <= -64 then
-                log("At bedrock level (Y=" .. turtle_pos.y .. ") - cannot go deeper")
-                stats.bedrock_hits = stats.bedrock_hits + 1
-                return false
+            -- If we can't move down, investigate why
+            local success, data = turtle.inspectDown()
+            if success then
+                log("Blocked by: " .. (data.name or "unknown block"))
+                if data.name and data.name:lower():find("bedrock") then
+                    log("CONFIRMED: Hit actual bedrock at Y=" .. turtle_pos.y)
+                    stats.bedrock_hits = stats.bedrock_hits + 1
+                    return false
+                else
+                    log("Blocked by " .. data.name .. " - trying to break through")
+                    -- Try harder to dig through
+                    for j = 1, 5 do
+                        if protectedDig("down") then
+                            log("Broke through obstacle, trying to descend again")
+                            if smartMove("down", false) then
+                                blocks_descended = blocks_descended + 1
+                                log("Successfully descended after clearing obstacle (Y=" .. turtle_pos.y .. ")")
+                                break
+                            end
+                        end
+                        sleep(0.5)
+                    end
+                    
+                    if blocks_descended < i then
+                        log("Cannot break through obstacle after " .. blocks_descended .. " blocks - may be bedrock or liquid")
+                        return false
+                    end
+                end
             else
-                log("Unknown obstacle preventing descent at Y=" .. turtle_pos.y)
-                return false
+                log("No block detected below but cannot move - may be at world bottom")
+                if turtle_pos.y <= -64 then
+                    log("At bedrock level (Y=" .. turtle_pos.y .. ") - cannot go deeper")
+                    stats.bedrock_hits = stats.bedrock_hits + 1
+                    return false
+                else
+                    log("Unknown obstacle preventing descent at Y=" .. turtle_pos.y)
+                    return false
+                end
             end
         end
     end
+    
+    log("Successfully descended " .. blocks_descended .. " blocks to Y=" .. turtle_pos.y)
+    return true
 end
 
-local function createRoomStairs(length, width, level, room_start)
+local function createRoomStairs(length, width, level, room_start, room_height)
     log("Creating stairs around room perimeter at level " .. level)
     
     if not navigateToRoomCorner(length, width) then
@@ -2407,7 +2421,7 @@ local function createRoomStairs(length, width, level, room_start)
     
     log("Perimeter stairs complete at level " .. level .. " with " .. total_torches .. " torches")
     
-    if not createDescentToNextLevel() then
+    if not createDescentToNextLevel(room_height) then
         log("Failed to create descent to next level")
         return false
     end
@@ -2415,10 +2429,9 @@ local function createRoomStairs(length, width, level, room_start)
     return true
 end
 
-local function navigateToRoomLevel(room_start, level)
-    log("Navigating to room start for level " .. level .. " (target Y=" .. (room_start.y - (level - 1)) .. ")")
-    
-    local target_y = room_start.y - (level - 1)
+local function navigateToRoomLevel(room_start, level, room_height)
+    local target_y = room_start.y - ((level - 1) * room_height)
+    log("Navigating to room start for level " .. level .. " (target Y=" .. target_y .. ")")
     
     -- Ender Modems: Always use GPS-based navigation (works at all depths)
     log("Using Ender Modem GPS navigation for level " .. level)
@@ -2460,7 +2473,7 @@ local function roomMine(length, width, numSections, depth, direction)
         
         if level > 1 then
             log("Navigating to level " .. level)
-            if not navigateToRoomLevel(room_start, level) then
+            if not navigateToRoomLevel(room_start, level, mining_room_height) then
                 log("Failed to navigate to level " .. level)
                 log("PARTIAL SUCCESS: Completed " .. (level - 1) .. " of " .. depth .. " levels")
                 return level - 1
@@ -2482,7 +2495,7 @@ local function roomMine(length, width, numSections, depth, direction)
         
         if level < depth then
             log("Creating staircase from level " .. level .. " to level " .. (level + 1))
-            if not createRoomStairs(length, width, level, room_start) then
+            if not createRoomStairs(length, width, level, room_start, mining_room_height) then
                 log("Failed to create stairs at level " .. level)
                 
                 local current_y = room_start.y - level
@@ -2910,59 +2923,69 @@ local function getMiningConfiguration()
     print("")
     
     if miningMode == "room" then
-        print("=== ROOM MINING CONFIGURATION ===")
-        mining_length = getValidatedNumber("Room length", 10, 100, 20)
-        print("")
-        mining_tunnelWidth = getValidatedNumber("Room width", 10, 100, 15)
-        print("")
-        
-        print("DEPTH CONFIGURATION:")
-        print("Current Y position: " .. turtle_pos.y)
-        print("Bedrock level: Y=-64")
-        print("Max possible levels to bedrock: " .. (turtle_pos.y + 64))
-        print("")
-        print("Quick depth options:")
-        print("• To diamond level (Y=15): " .. math.max(1, turtle_pos.y - 15 + 1) .. " levels")
-        print("• To bedrock (Y=-64): " .. (turtle_pos.y + 64) .. " levels")
-        print("• Current suggestion: Stay shallow for safety")
-        print("")
-        mining_depth = getValidatedNumber("Number of levels downward", 1, 400, 3)
-        print("")
-        
-        local final_y = turtle_pos.y - (mining_depth - 1)
-        print("Mining will go from Y=" .. turtle_pos.y .. " down to Y=" .. final_y)
-        if final_y <= -64 then
-            print("WARNING: This will reach bedrock! Final depth: " .. math.abs(final_y + 64) .. " levels into bedrock")
-        elseif final_y <= 15 then
-            print("EXCELLENT: This will reach diamond levels (Y=15 and below)!")
-        elseif final_y <= 50 then
-            print("GOOD: This will reach good ore levels (iron, gold, redstone)")
-        else
-            print("INFO: This will stay in upper levels (coal, iron territory)")
-        end
-        print("")
-        
-        mining_spacing = 0
-        mining_numTunnels = 1
-        mining_direction = "right"
-        mining_type = "room"
-        
-        print("Room mining configured: " .. mining_length .. "x" .. mining_tunnelWidth .. " room, " .. mining_depth .. " levels deep")
-        print("Final depth: Y=" .. final_y)
-        print("Enhanced features: 3x3=" .. tostring(CONFIG.enable3x3Mining) .. ", OreVeins=" .. tostring(CONFIG.followOreVeins))
-        print("Modded support: Auto-detect=" .. tostring(CONFIG.auto_detect_modded_ores) .. ", Custom ores=" .. countTableElements(custom_ore_priorities))
-        
-        if mining_depth > 50 then
-            print("")
-            print("=== DEEP MINING WARNING ===")
-            print("Deep mining (" .. mining_depth .. " levels):")
-            print("• Est. time: " .. string.format("%.1f", (mining_length * mining_tunnelWidth * mining_depth) / 100) .. " hours+")
-            print("• Chests needed: ~" .. math.ceil(mining_depth / 10) .. "+ stacks")
-            print("• Torches needed: ~" .. math.ceil((mining_length * mining_tunnelWidth * mining_depth) / CONFIG.torchSpacing) .. "+")
-            print("• This is a MASSIVE operation!")
-            print("")
-            sleep(1)
-        end
+		print("=== ROOM MINING CONFIGURATION ===")
+		mining_length = getValidatedNumber("Room length", 10, 100, 20)
+		print("")
+		mining_tunnelWidth = getValidatedNumber("Room width", 10, 100, 15)
+		print("")
+		
+		print("ROOM HEIGHT CONFIGURATION:")
+		print("This sets how tall each mining level will be")
+		print("• 3 blocks = Comfortable walking height")
+		print("• 5 blocks = Standard room height")
+		print("• 10 blocks = Large cavern style")
+		mining_room_height = getValidatedNumber("Room height (blocks per level)", 3, 10, 5)
+		print("")
+		
+		print("DEPTH CONFIGURATION:")
+		print("Current Y position: " .. turtle_pos.y)
+		print("Bedrock level: Y=-64")
+		print("Max possible levels to bedrock: " .. math.floor((turtle_pos.y + 64) / mining_room_height))
+		print("")
+		print("Quick depth options (with " .. mining_room_height .. " block tall rooms):")
+		print("• To diamond level (Y=15): " .. math.max(1, math.floor((turtle_pos.y - 15) / mining_room_height)) .. " levels")
+		print("• To bedrock (Y=-64): " .. math.floor((turtle_pos.y + 64) / mining_room_height) .. " levels")
+		print("• Current suggestion: Start with fewer levels to test")
+		print("")
+		mining_depth = getValidatedNumber("Number of levels downward", 1, math.floor((turtle_pos.y + 64) / mining_room_height), 3)
+		print("")
+		
+		local final_y = turtle_pos.y - (mining_depth * mining_room_height)
+		print("Mining will go from Y=" .. turtle_pos.y .. " down to Y=" .. final_y)
+		print("Each level will be " .. mining_room_height .. " blocks tall")
+		if final_y <= -64 then
+			print("WARNING: This will reach bedrock! Final depth: " .. math.abs(final_y + 64) .. " blocks into bedrock")
+		elseif final_y <= 15 then
+			print("EXCELLENT: This will reach diamond levels (Y=15 and below)!")
+		elseif final_y <= 50 then
+			print("GOOD: This will reach good ore levels (iron, gold, redstone)")
+		else
+			print("INFO: This will stay in upper levels (coal, iron territory)")
+		end
+		print("")
+		
+		mining_spacing = 0
+		mining_numTunnels = 1
+		mining_direction = "right"
+		mining_type = "room"
+		
+		print("Room mining configured: " .. mining_length .. "x" .. mining_tunnelWidth .. " room")
+		print("Levels: " .. mining_depth .. " (each " .. mining_room_height .. " blocks tall)")
+		print("Total depth: " .. (mining_depth * mining_room_height) .. " blocks (Y=" .. turtle_pos.y .. " to Y=" .. final_y .. ")")
+		print("Enhanced features: 3x3=" .. tostring(CONFIG.enable3x3Mining) .. ", OreVeins=" .. tostring(CONFIG.followOreVeins))
+		print("Modded support: Auto-detect=" .. tostring(CONFIG.auto_detect_modded_ores) .. ", Custom ores=" .. countTableElements(custom_ore_priorities))
+		
+		if mining_depth > 10 then
+			print("")
+			print("=== DEEP MINING WARNING ===")
+			print("Deep mining (" .. mining_depth .. " levels, " .. (mining_depth * mining_room_height) .. " blocks deep):")
+			print("• Est. time: " .. string.format("%.1f", (mining_length * mining_tunnelWidth * mining_depth * mining_room_height) / 100) .. " hours+")
+			print("• Chests needed: ~" .. math.ceil(mining_depth * 2) .. "+ stacks")
+			print("• Torches needed: ~" .. math.ceil((mining_length * mining_tunnelWidth * mining_depth) / CONFIG.torchSpacing) .. "+")
+			print("• This is a MASSIVE operation!")
+			print("")
+			sleep(1)
+		end
         
     else
         print("=== STRIP MINING CONFIGURATION ===")
